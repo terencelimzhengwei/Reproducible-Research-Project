@@ -1,0 +1,266 @@
+# Impact of Severe Weather Events on Public Health and the Economy
+_Terence Lim, 17 January 2015_
+
+## Synopsis
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database to solve two major questions.
+
+    1. Across the United States, which types of events are most harmful with respect to population health?
+    2. Across the United States, which types of events have the greatest economic consequences?
+
+Thorough analysis of this data has led to the conclusion that:
+
+    1. Tornadoes are the most detrimental to human health.
+    2. Flooding causes the greatest economic damage.
+    
+## Data Processing
+### Load the relevant libraries
+
+```r
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+### Download and load data from U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database
+
+```r
+url = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+filename = "repdata-data-StormData.csv"
+data.filename = "repdata-data-StormData.csv.bz2"
+
+if(sum(data.filename %in% list.files())==0)
+    download.file(url,filename)
+
+storm_data <- tbl_df(read.csv(bzfile("./repdata-data-StormData.csv.bz2")))
+```
+### Remove unnecessary variables
+After reading the documentation, only the few variables below are necessary for our analysis:
+
+* EVTYPE    : Event Type
+* FATALITIES: Number of fatalities
+* INJURIES  : Number of injuries
+* PROPDMG   : Property Damage
+* PROPDMGEXP: Property Damage Exponent which modifies PROPDMG based on whether it is k,b,m etc.
+* CROPDMG   : Crop Damange
+* CROPDMGEXP: Crop Damage Exponent which modifies PROPDMG based on whether it is k,b,m etc.
+
+
+```r
+names(storm_data)
+```
+
+```
+##  [1] "STATE__"    "BGN_DATE"   "BGN_TIME"   "TIME_ZONE"  "COUNTY"    
+##  [6] "COUNTYNAME" "STATE"      "EVTYPE"     "BGN_RANGE"  "BGN_AZI"   
+## [11] "BGN_LOCATI" "END_DATE"   "END_TIME"   "COUNTY_END" "COUNTYENDN"
+## [16] "END_RANGE"  "END_AZI"    "END_LOCATI" "LENGTH"     "WIDTH"     
+## [21] "F"          "MAG"        "FATALITIES" "INJURIES"   "PROPDMG"   
+## [26] "PROPDMGEXP" "CROPDMG"    "CROPDMGEXP" "WFO"        "STATEOFFIC"
+## [31] "ZONENAMES"  "LATITUDE"   "LONGITUDE"  "LATITUDE_E" "LONGITUDE_"
+## [36] "REMARKS"    "REFNUM"
+```
+
+```r
+storm_data <- storm_data[c("EVTYPE","FATALITIES","INJURIES","PROPDMG",
+                           "PROPDMGEXP","CROPDMG","CROPDMGEXP")]
+                           
+storm_data$EVTYPE <- tolower(as.character(storm_data$EVTYPE))
+storm_data$PROPDMGEXP <- tolower(as.character(storm_data$PROPDMGEXP))
+storm_data$CROPDMGEXP <- tolower(as.character(storm_data$CROPDMGEXP))
+```
+
+### Convert Exponents to numeric value
+
+```r
+unique(storm_data$PROPDMGEXP)
+```
+
+```
+##  [1] "k" "m" ""  "b" "+" "0" "5" "6" "?" "4" "2" "3" "h" "7" "-" "1" "8"
+```
+
+```r
+storm_data$PROPDMGEXP[storm_data$PROPDMGEXP=="k"]="1000"
+storm_data$PROPDMGEXP[storm_data$PROPDMGEXP=="m"]="1000000"
+storm_data$PROPDMGEXP[storm_data$PROPDMGEXP=="b"]="1000000000"
+storm_data$PROPDMGEXP[storm_data$PROPDMGEXP==""]="0"
+storm_data$PROPDMGEXP[storm_data$PROPDMGEXP=="-"]="0"
+storm_data$PROPDMGEXP[storm_data$PROPDMGEXP=="?"]="0"
+storm_data$PROPDMGEXP[storm_data$PROPDMGEXP=="+"]="1"
+storm_data$PROPDMGEXP[c(0,1,2,3,4,5,6,7,8,9) %in% storm_data$PROPDMGEXP]="10"
+
+unique(storm_data$CROPDMGEXP)
+```
+
+```
+## [1] ""  "m" "k" "b" "?" "0" "2"
+```
+
+```r
+storm_data$CROPDMGEXP[storm_data$CROPDMGEXP=="k"]="1000"
+storm_data$CROPDMGEXP[storm_data$CROPDMGEXP=="m"]="1000000"
+storm_data$CROPDMGEXP[storm_data$CROPDMGEXP=="b"]="1000000000"
+storm_data$CROPDMGEXP[storm_data$CROPDMGEXP==""]="0"
+storm_data$CROPDMGEXP[storm_data$CROPDMGEXP=="-"]="0"
+storm_data$CROPDMGEXP[storm_data$CROPDMGEXP=="?"]="0"
+storm_data$CROPDMGEXP[storm_data$CROPDMGEXP=="+"]="1"
+storm_data$CROPDMGEXP[c(0,1,2,3,4,5,6,7,8,9) %in% storm_data$CROPDMGEXP]="10"
+```
+
+### Calculate actual damage values
+Calculate actual damage values and store them in two new variables:
+
+* PROP_DMG = PROPDMG * PROPDMGEXP
+* CROP_DMG = CROPDMG * CROPDMGEXP
+
+```r
+storm_data$PROPDMGEXP <- as.numeric(storm_data$PROPDMGEXP)
+storm_data$CROPDMGEXP <- as.numeric(storm_data$CROPDMGEXP)
+storm_data$PROP_DMG <- storm_data$PROPDMG*storm_data$PROPDMGEXP
+storm_data$CROP_DMG <- storm_data$CROPDMG*storm_data$CROPDMGEXP
+```
+
+### Transform Data
+1. Keep only the relevant columns
+2. Filter data by non zero row
+3. Group same EVTYPEs together
+4. Summarize each column by the sum of similar EVTYPEs
+5. Arrange the data
+
+
+```r
+# Only keep the new calculated data
+storm_data <- storm_data[c("EVTYPE","FATALITIES","INJURIES","PROP_DMG","CROP_DMG")]
+
+filtered_data <- storm_data %>%   #filter values !=0                              
+    filter(FATALITIES!=0|
+               INJURIES!=0|
+               PROP_DMG!=0|
+               CROP_DMG!=0)%>%
+    group_by(EVTYPE) %>%          #group by EVTYPE
+    summarize_each(funs(sum))%>%  #summarize all columns by sum
+    arrange(desc(FATALITIES),     #arrange accordingly
+            desc(INJURIES),
+            desc(PROP_DMG),
+            desc(CROP_DMG))
+```
+
+### Replace similar words
+
+There are words that are spelt differently but mean the same. We will look at the top 10 rows for each column and try to replace similar words as the same word.
+
+
+```r
+head(filtered_data$EVTYPE,5)
+```
+
+```
+## [1] "tornado"        "excessive heat" "flash flood"    "heat"          
+## [5] "lightning"
+```
+
+```r
+head(arrange(filtered_data,desc(INJURIES))$EVTYPE,5)
+```
+
+```
+## [1] "tornado"        "tstm wind"      "flood"          "excessive heat"
+## [5] "lightning"
+```
+
+```r
+head(arrange(filtered_data,desc(PROP_DMG))$EVTYPE,5)
+```
+
+```
+## [1] "tornado"        "flood"          "hurricane opal" "flash flood"   
+## [5] "hail"
+```
+
+```r
+head(arrange(filtered_data,desc(CROP_DMG))$EVTYPE,5)
+```
+
+```
+## [1] "drought"     "river flood" "ice storm"   "flood"       "hail"
+```
+
+```r
+filtered_data$EVTYPE[grepl("torn",filtered_data$EVTYPE)]="tornado"
+filtered_data$EVTYPE[grepl("ex.+ heat",filtered_data$EVTYPE)]="excessive heat"
+filtered_data$EVTYPE[grepl("flash",filtered_data$EVTYPE)]="flash flood"
+filtered_data$EVTYPE[grepl("^heat",filtered_data$EVTYPE)]="heat"
+filtered_data$EVTYPE[grepl("lightning",filtered_data$EVTYPE)]="lightning"
+filtered_data$EVTYPE[grepl("tstm",filtered_data$EVTYPE)]="thunderstorm wind"
+filtered_data$EVTYPE[grepl("thunderstorm",filtered_data$EVTYPE)]="thunderstorm wind"
+filtered_data$EVTYPE[grepl("^flood",filtered_data$EVTYPE)]="flood"
+filtered_data$EVTYPE[grepl("river flood",filtered_data$EVTYPE)]="flood"
+filtered_data$EVTYPE[grepl("rip",filtered_data$EVTYPE)]="rip current"
+filtered_data$EVTYPE[grepl("high wind",filtered_data$EVTYPE)]="high wind"
+filtered_data$EVTYPE[grepl("avala",filtered_data$EVTYPE)]="avalanche"
+filtered_data$EVTYPE[grepl("hurricane",filtered_data$EVTYPE)]="hurricane"
+filtered_data$EVTYPE[grepl("hail",filtered_data$EVTYPE)]="hail"
+filtered_data$EVTYPE[grepl("ice storm",filtered_data$EVTYPE)]="ice storm"
+filtered_data$EVTYPE[grepl("drought",filtered_data$EVTYPE)]="drought"
+```
+
+### Re-transform data after replacing similar words
+
+```r
+filtered_data <- filtered_data %>%
+    group_by(EVTYPE) %>%
+    summarize_each(funs(sum))%>%
+    mutate(TOTAL_DMG=PROP_DMG+CROP_DMG) %>%
+    arrange(desc(FATALITIES),desc(INJURIES))
+```
+
+## Results
+
+
+### Effects of weather events on public health
+
+
+```r
+health_data <- filtered_data[1:10,c("EVTYPE","INJURIES","FATALITIES")] %>%
+    gather("fatality_type","value",2:3)
+
+ggplot(health_data,aes(x=reorder(EVTYPE,-value),y=value,fill=fatality_type))+
+    geom_bar(stat="identity")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+    xlab("Event Type")+
+    ylab("Number of Fatalities/Injuries")+
+    ggtitle("Top 10 weather causes of fatalities/injuries")+
+    scale_fill_discrete(name="Type")
+```
+
+![](PA2_template_files/figure-html/unnamed-chunk-9-1.png)\
+
+        
+         Tornado is clearly the most dangerous weather event.
+
+### Effects of weather events on economy
+
+
+```r
+economic_data <- arrange(filtered_data,desc(TOTAL_DMG))[1:10,c("EVTYPE","PROP_DMG","CROP_DMG")] %>%
+    gather("economic_type","value",2:3) %>%
+    mutate(value=value/1000000000)
+
+ggplot(economic_data,aes(x=reorder(EVTYPE,-value),y=value,fill=economic_type))+
+    geom_bar(stat="identity")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+    xlab("Event Type")+
+    ylab("Damage in USD (billions)")+
+    ggtitle("Top 10 weather causes of fatalities/injuries")+
+    scale_fill_discrete(name="Type",
+                        labels = c("PROPERTY","CROP"))
+```
+
+![](PA2_template_files/figure-html/unnamed-chunk-10-1.png)\
+
+        
+         Flooding has the biggest impact on the economy, closely followed by drought then hurricanes.
+
+
